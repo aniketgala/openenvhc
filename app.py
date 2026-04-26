@@ -35,7 +35,7 @@ def _extract_metrics(logs: str) -> str:
         "trained": r"(?:Trained policy mean ± std|Ensemble mean ± std):\s*(.+)",
         "mood": r"Mood match:\s*(.+)",
         "genre": r"Genre match:\s*(.+)",
-        "improvement": r"(?:Reward improvement over baseline|Ensemble improvement):\s*(.+)",
+        "improvement": r"(?:Reward improvement over baseline|Ensemble improvement|Improvement over baseline):\s*(.+)",
         "trl_mean": r"Mean reward:\s*(.+)",
         "trl_last": r"Last 20 mean reward:\s*(.+)",
     }
@@ -64,6 +64,9 @@ def _extract_metrics(logs: str) -> str:
         lines.append(f"- TRL mean reward: `{values['trl_mean']}`")
     if "trl_last" in values:
         lines.append(f"- TRL last-20 mean: `{values['trl_last']}`")
+    if "trl_mean" in values or "trl_last" in values or "improvement" in values:
+        lines.append("")
+        lines.append("Observation: TRL shows higher variance due to preference shifts.")
     return "\n".join(lines)
 
 

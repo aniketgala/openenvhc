@@ -1,2 +1,0 @@
-[console_scripts]
-server = music_rl_env.server.app:main

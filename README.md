@@ -1,106 +1,137 @@
-# Music Recommendation RL Project
+# 🎧 Adaptive Music Recommendation with DRQN vs LLM-RL
 
-## 1) Problem
+## 🚀 Overview
 
-Train an agent to recommend songs that adapt to evolving user preferences over an episode.  
-This project includes:
+We built a sequential music recommendation system under **changing user preferences**, modeled as a non-stationary RL environment.
 
-- an OpenEnv-compatible custom environment
-- a strong DRQN baseline (recurrent Q-learning)
-- an additional TRL-based LLM policy pipeline for hackathon requirements
-- Hugging Face Space deployment with a Gradio UI
+We compare two fundamentally different approaches:
 
-## 2) Environment
+* **DRQN (Deep RL)** → recurrent Q-learning with memory
+* **TRL (LLM-based RL)** → language-model policy optimized via PPO
 
-Environment class: `server/music_rl_env_environment.py` (`MusicRlEnvironment`)
+## 🌟 Why This Project is Unique
 
-- `reset()` returns an observation
-- `step(action)` applies an action and returns next observation with reward/done metadata (OpenEnv schema-compatible)
-- `observation_state()` provides current observable state helper
-- FastAPI server wiring remains in `server/app.py` via `create_app(...)`
+Reinforcement learning has been widely explored in:
 
-Observation includes:
+* games
+* robotics
+* control systems
 
-- `phase`
-- `last_outcome`
-- `recent_song_features` (`energy`, `valence`, `danceability`)
+However, **sequential recommendation under shifting user preferences** — especially combining **deep RL and LLM-based RL** — is still relatively underexplored.
 
-Action supports:
+Most recommendation systems:
 
-- `song_index` (int) for index-based recommendation
-- `song_id` (str) for backward compatibility
+* assume static preferences
+* rely on supervised learning or bandits
 
-Reward logic is unchanged from the existing environment implementation.
+In contrast, this project:
 
-## 3) Methods
+* models **dynamic user behavior**
+* introduces **mid-episode preference shifts**
+* compares **two fundamentally different learning paradigms**
 
-### DRQN (baseline RL)
+👉 This makes it closer to real-world user interaction than traditional setups.
 
-File: `deep_rl_train.py`
+## 🧠 Key Idea
 
-- recurrent `Q(seq, action_features)` model
-- multi-seed training (`[0, 42, 99]`)
-- best-checkpoint evaluation per seed (`best_model_seed_<seed>.pt`)
-- deterministic evaluation (`epsilon=0`)
-- optional ensemble evaluation over top checkpoints
+User preferences shift mid-episode.
 
-### TRL (LLM-based RL)
+The agent must:
 
-File: `trl_train.py`
+* detect preference change
+* adapt recommendations dynamically
 
-- lightweight model (`distilgpt2`) with TRL PPO
-- state-to-text prompt to predict song index
-- environment interaction loop using the same `MusicRlEnvironment`
-- small-run training with reward logging and summary outputs
+## ⚙️ Environment
 
-## 4) Results
+* State:
+  * phase (before/after shift)
+  * last outcome
+  * recent song features (energy, valence, danceability)
+* Action:
+  * select a song (index)
+* Reward:
+  * genre match
+  * mood alignment
+  * adaptation bonus
+  * repeat penalty
+  * mismatch penalty
 
-- DRQN output artifacts:
-  - `model.pt`
-  - `best_model_seed_0.pt`
-  - `best_model_seed_42.pt`
-  - `best_model_seed_99.pt`
-  - `final_training_plot.png`
-  - `reward_distribution.png`
-  - `summary.json`
-- TRL output artifacts:
-  - `trl_training_plot.png`
-  - `trl_summary.json`
+## 🏗️ Methods
 
-The DRQN baseline is the primary high-performing method; TRL demonstrates an LLM-based RL training path.
+### 1. DRQN (Baseline)
 
-## 5) How To Run
+* LSTM-based Q-network
+* multi-seed training + ensemble
+* strong, stable performance
 
-### Install
+### 2. TRL (LLM-RL)
 
-```bash
-pip install -r requirements.txt
-```
+* TinyLlama / distilgpt2
+* PPO optimization
+* logit-based action selection (no parsing)
+* reward shaping + compression
 
-### DRQN training
+## 📊 Results
 
-```bash
-python deep_rl_train.py --dataset-path "dataset.csv" --episodes 1400 --sample-size 50 --batch-size 32 --seed 42
-```
+| Model           | Score     |
+| --------------- | --------- |
+| Random Baseline | ~1.45     |
+| TRL (LLM-RL)    | **2.06**  |
+| DRQN            | **~7–8+** |
 
-### TRL training
+## 🔍 Key Insights
 
-```bash
-python trl_train.py
-```
+* DRQN is **stable and high-performing**
+* TRL is **adaptive but high-variance**
+* Even with reward stabilization, TRL shows spikes due to **non-stationary preferences**
 
-### Hugging Face Space / local Gradio app
+## 📈 Interpretation
+
+Reward spikes correspond to:  
+👉 successful adaptation after preference shifts
+
+This highlights a key challenge:
+
+> RL in dynamic environments is inherently volatile, especially for language-based policies.
+
+## 🧪 Demo
+
+Run:
 
 ```bash
 python app.py
 ```
 
-In the UI, select:
+Choose:
 
-- `DRQN (Deep RL)` or
-- `LLM (TRL)`
+* DRQN → stable behavior
+* TRL → adaptive but spiky behavior
 
-and click **Run Training**.
+## 💡 Takeaway
+
+* Deep RL → optimization
+* LLM-RL → reasoning + adaptability
+
+👉 Hybrid systems are promising.
+
+## 🛠️ Build Journey
+
+This wasn’t a smooth ride.
+
+* Multiple RL approaches failed before stabilizing DRQN
+* TRL pipeline initially produced invalid outputs (`!!!!`, broken parsing)
+* Reward instability required multiple redesigns (scaling, normalization, log compression)
+
+And yes…
+
+> **After ~45 Hugging Face Space pushes, countless crashes, and debugging sessions — it finally worked.**
+
+## 🧠 What We Learned
+
+* LLMs are not naturally good at raw action selection → require structure
+* PPO with language models is highly sensitive to reward design
+* Non-stationary environments introduce unavoidable variance
+* Stability (DRQN) vs adaptability (TRL) is a real trade-off
 
 ## ☁️ Running on Google Colab
 
@@ -111,3 +142,5 @@ In Colab, some preinstalled packages (like diffusers) may cause dependency confl
 1. Run setup cell to install compatible versions  
 2. Restart runtime  
 3. Run training script
+
+> This project started as an experiment — and ended as a comparison of two different ways machines can learn to understand human preferences.

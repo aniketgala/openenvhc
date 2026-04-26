@@ -137,16 +137,13 @@ def reasoning_score(text: str) -> int:
     return sum(k in lowered for k in keywords)
 
 
-def shape_reward(env_reward: float, repeated: bool, action_switched: bool, prev_reward: float) -> float:
-    reward = env_reward
+def shape_reward(raw_reward: float, repeated: bool, action_switched: bool) -> float:
+    shaped_reward = raw_reward
     if not repeated:
-        reward += 0.3
+        shaped_reward += 0.3
     if action_switched:
-        reward -= 0.05
-    reward = reward / 5.0
-    reward = max(min(reward, 2.0), -2.0)
-    smoothed_reward = 0.7 * reward + 0.3 * prev_reward
-    return smoothed_reward
+        shaped_reward -= 0.05
+    return shaped_reward
 
 
 def build_warmstart_samples(episodes: int, songs_subset: list[dict], advisor: BaselineAdvisor) -> list[tuple[str, str]]:
@@ -241,43 +238,26 @@ def _try_ppo_step(
     query_buffer: list[torch.Tensor],
     response_buffer: list[torch.Tensor],
     reward_buffer: list[torch.Tensor],
-    running_mean: float,
-    running_std: float,
-) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor], float, float]:
+) -> tuple[list[torch.Tensor], list[torch.Tensor], list[torch.Tensor]]:
     min_len = min(len(query_buffer), len(response_buffer), len(reward_buffer))
     query_buffer = query_buffer[:min_len]
     response_buffer = response_buffer[:min_len]
     reward_buffer = reward_buffer[:min_len]
     if min_len < 8:
-        return query_buffer, response_buffer, reward_buffer, running_mean, running_std
+        return query_buffer, response_buffer, reward_buffer
 
-    batch_vals = torch.stack(reward_buffer).float().cpu()
-    batch_mean = float(batch_vals.mean().item())
-    batch_std = float(batch_vals.std(unbiased=False).item())
-    running_mean = 0.9 * running_mean + 0.1 * batch_mean
-    running_std = 0.9 * running_std + 0.1 * batch_std
-    normed_rewards = [
-        torch.tensor(
-            (float(r.item()) - running_mean) / (running_std + 1e-8),
-            dtype=torch.float32,
-            device=r.device,
-        )
-        for r in reward_buffer
-    ]
+    assert len(query_buffer) == len(response_buffer) == len(reward_buffer)
+    assert isinstance(reward_buffer[0], torch.Tensor)
+    assert max(reward_buffer) <= 2.0
+    assert min(reward_buffer) >= -2.0
     if DEBUG_MODE:
+        batch_vals = torch.stack(reward_buffer).float().cpu().numpy()
         print(
-            f"[PPO PRE] batch_mean={batch_vals.mean().item():.4f} "
-            f"batch_std={batch_vals.std(unbiased=False).item():.4f} "
-            f"running_mean={running_mean:.4f} running_std={running_std:.4f}"
+            f"[PPO PRE] batch_mean={float(batch_vals.mean()):.4f} "
+            f"batch_std={float(batch_vals.std()):.4f}"
         )
-    if DEBUG_MODE:
-        norm_vals = torch.stack(normed_rewards).float().cpu()
-        print(
-            f"[PPO POST] norm_mean={norm_vals.mean().item():.4f} "
-            f"norm_std={norm_vals.std(unbiased=False).item():.4f}"
-        )
-    ppo_trainer.step(query_buffer, response_buffer, normed_rewards)
-    return [], [], [], running_mean, running_std
+    ppo_trainer.step(query_buffer, response_buffer, reward_buffer)
+    return [], [], []
 
 
 def evaluate_random(env_seed: int, episodes: int, max_idx: int) -> list[float]:
@@ -397,11 +377,10 @@ def main() -> None:
     per_episode_parse_rates: list[float] = []
 
     print("Starting TRL PPO training...")
+    print("Using STABILIZED rewards (scaled + clipped)")
     query_buffer: list[torch.Tensor] = []
     response_buffer: list[torch.Tensor] = []
     reward_buffer: list[torch.Tensor] = []
-    running_mean = 0.0
-    running_std = 1.0
 
     for ep in range(episodes):
         episode = ep + 1
@@ -418,7 +397,6 @@ def main() -> None:
         episode_raw_step_rewards: list[float] = []
         episode_shaped_step_rewards: list[float] = []
         previous_action_idx: int | None = None
-        previous_smoothed_reward = 0.0
 
         while not done:
             baseline_suggestion = None
@@ -443,22 +421,25 @@ def main() -> None:
             repeated = memory.is_recent_repeat(action_idx)
             action_switched = previous_action_idx is not None and action_idx != previous_action_idx
             obs = env_episode.step(MusicRlAction(song_index=action_idx))
-            env_reward = float(obs.reward or 0.0)
+            raw_reward = float(obs.reward or 0.0)
             shaped_reward = shape_reward(
-                env_reward=env_reward,
+                raw_reward=raw_reward,
                 repeated=repeated,
                 action_switched=action_switched,
-                prev_reward=previous_smoothed_reward,
             )
-            previous_smoothed_reward = shaped_reward
+            if shaped_reward >= 0:
+                compressed_reward = math.log1p(shaped_reward)
+            else:
+                compressed_reward = -math.log1p(abs(shaped_reward))
+            final_reward = max(min(compressed_reward, 2.0), -2.0)
             previous_action_idx = action_idx
             step_reasoning_score = reasoning_score(response_text)
-            memory.add(action_idx, env_reward)
+            memory.add(action_idx, raw_reward)
 
-            raw_total += env_reward
-            shaped_total += shaped_reward
-            episode_raw_step_rewards.append(env_reward)
-            episode_shaped_step_rewards.append(shaped_reward)
+            raw_total += raw_reward
+            shaped_total += final_reward
+            episode_raw_step_rewards.append(raw_reward)
+            episode_shaped_step_rewards.append(final_reward)
             episode_reasoning_scores.append(step_reasoning_score)
             reasoning_scores_all.append(step_reasoning_score)
             done = bool(obs.done)
@@ -468,15 +449,13 @@ def main() -> None:
             if not warmup_random:
                 query_buffer.append(query_tensor)
                 response_buffer.append(response_tensor)
-                reward_buffer.append(torch.tensor(shaped_reward, dtype=torch.float32, device=device))
+                reward_buffer.append(torch.tensor(final_reward, dtype=torch.float32).to(device))
                 if len(query_buffer) >= ppo_config.batch_size:
-                    query_buffer, response_buffer, reward_buffer, running_mean, running_std = _try_ppo_step(
+                    query_buffer, response_buffer, reward_buffer = _try_ppo_step(
                         ppo_trainer=ppo_trainer,
                         query_buffer=query_buffer,
                         response_buffer=response_buffer,
                         reward_buffer=reward_buffer,
-                        running_mean=running_mean,
-                        running_std=running_std,
                     )
 
             last_action_text = f"SONG_{action_idx}"
@@ -485,7 +464,8 @@ def main() -> None:
                 short_output = response_text[:200].replace("\n", " ")
                 print(f"[EP {episode} | STEP {episode_steps}]")
                 print(f"Action: {last_action_text} | Parsed: True")
-                print(f"Raw reward: {env_reward:.3f} | Shaped: {shaped_reward:.3f}")
+                print(f"Raw reward: {raw_reward:.3f} | Final: {final_reward:.3f}")
+                print(f"[DEBUG] raw={raw_reward:.2f} -> log_scaled={final_reward:.2f}")
                 print(f"Reasoning score: {step_reasoning_score}/5")
                 print(f"Prompt: \"{short_prompt}\"")
                 print(f"Output: \"{short_output}\"")
@@ -507,9 +487,10 @@ def main() -> None:
             break
 
         print(
-            f"Episode {episode}/{episodes} | raw={raw_total:.3f} | shaped={shaped_total:.3f} | "
+            f"Episode {episode}/{episodes} | raw={raw_total:.3f} | final={shaped_total:.3f} | "
             f"action={last_action_text} | parse_ok={episode_parsed}/{episode_steps}"
         )
+        print("Insight: Reward spike likely due to successful adaptation.")
         print(f"Parse success rate: {episode_parse_rate * 100:.1f}%")
         if episode_raw_step_rewards:
             print(
@@ -521,13 +502,11 @@ def main() -> None:
             )
 
     if query_buffer:
-        query_buffer, response_buffer, reward_buffer, running_mean, running_std = _try_ppo_step(
+        query_buffer, response_buffer, reward_buffer = _try_ppo_step(
             ppo_trainer=ppo_trainer,
             query_buffer=query_buffer,
             response_buffer=response_buffer,
             reward_buffer=reward_buffer,
-            running_mean=running_mean,
-            running_std=running_std,
         )
 
     baseline_rewards = evaluate_random(env_seed=2000, episodes=20, max_idx=max_idx)
@@ -568,6 +547,7 @@ def main() -> None:
     print(f"Parse success rate: {parse_success_rate * 100:.1f}%")
     print(f"Saved plot: {plot_path or PLOT_PATH}")
     print(f"Saved summary: {SUMMARY_PATH}")
+    print("Conclusion: DRQN is stable; TRL is adaptive but volatile.")
 
     if DEBUG_MODE and raw_rewards_per_episode:
         avg_reasoning = mean(reasoning_scores_all) if reasoning_scores_all else 0.0

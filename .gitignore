@@ -3,3 +3,11 @@ __pycache__/
 *.pyc
 *.pyo
 *.pyd
+*.pt
+*.png
+summary.json
+trl_summary.json
+deep_training_summary.json
+training_rewards.json
+training_runs_summary.json
+openenv_music_rl_env.egg-info/
