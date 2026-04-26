@@ -7,7 +7,9 @@ import locale
 import math
 import os
 import random
+import sys
 from collections import deque
+from functools import partial
 from pathlib import Path
 from statistics import mean
 
@@ -15,6 +17,7 @@ from statistics import mean
 os.environ["HF_HOME"] = "D:/hf_cache"
 os.environ["TRANSFORMERS_CACHE"] = "D:/hf_cache/transformers"
 os.environ["HF_DATASETS_CACHE"] = "D:/hf_cache/datasets"
+os.environ["PYTHONUNBUFFERED"] = "1"
 os.makedirs("D:/hf_cache", exist_ok=True)
 os.makedirs("D:/hf_cache/transformers", exist_ok=True)
 os.makedirs("D:/hf_cache/datasets", exist_ok=True)
@@ -30,7 +33,11 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Work around Windows default cp1252 decoding issues in some TRL template files.
 locale.getpreferredencoding = lambda do_setlocale=True: "utf-8"  # type: ignore[assignment]
 
-from trl import AutoModelForCausalLMWithValueHead, PPOConfig, PPOTrainer
+from trl import PPOConfig, PPOTrainer
+try:
+    from trl.models import AutoModelForCausalLMWithValueHead
+except ImportError:
+    from trl import AutoModelForCausalLMWithValueHead
 
 from models import MusicRlAction
 from server.music_rl_env_environment import MusicRlEnvironment
@@ -43,6 +50,7 @@ DEBUG_PATH = ROOT / "trl_debug.json"
 DEBUG_MODE = True
 ACTION_TOKENS = [f" SONG_{i}" for i in range(20)]
 torch.set_num_threads(2)
+print = partial(print, flush=True)  # noqa: A001
 
 
 class EpisodeMemory:
@@ -344,7 +352,7 @@ def main() -> None:
 
     ppo_config = PPOConfig(
         learning_rate=8e-6,
-        batch_size=32,
+        batch_size=8,
         mini_batch_size=8,
         ppo_epochs=4,
         gradient_accumulation_steps=1,
@@ -364,12 +372,15 @@ def main() -> None:
     if hasattr(ppo_config, "entropy_coef"):
         ppo_config.entropy_coef = 0.01
     ppo_trainer = PPOTrainer(config=ppo_config, model=model, ref_model=ref_model, tokenizer=tokenizer)
+    print("✅ TRL model loaded, starting training...")
+    sys.stdout.flush()
 
     advisor = BaselineAdvisor()
     warm_samples = build_warmstart_samples(episodes=120, songs_subset=songs_subset, advisor=advisor)
     supervised_warm_start(model, tokenizer, warm_samples, device=device)
 
-    episodes = 15 if DEBUG_MODE else 80
+    episodes = 5 if DEBUG_MODE else 80
+    max_steps = 5 if DEBUG_MODE else 10_000
     raw_rewards_per_episode: list[float] = []
     shaped_rewards_per_episode: list[float] = []
     best_last20 = -float("inf")
@@ -378,12 +389,21 @@ def main() -> None:
 
     print("Starting TRL PPO training...")
     print("Using STABILIZED rewards (scaled + clipped)")
+    sys.stdout.flush()
     query_buffer: list[torch.Tensor] = []
     response_buffer: list[torch.Tensor] = []
     reward_buffer: list[torch.Tensor] = []
 
+    print(">>> Entering TRL training loop")
+    sys.stdout.flush()
     for ep in range(episodes):
         episode = ep + 1
+        print(f"[LOOP] Episode {episode}")
+        if episode % 1 == 0:
+            print(f"[TRL] Episode {episode} | Reward: pending")
+        if episode > 5:
+            print("Debug exit")
+            break
         env_episode = MusicRlEnvironment(seed=1000 + ep)
         obs = env_episode.reset()
         memory = EpisodeMemory(maxlen=3)
@@ -398,29 +418,20 @@ def main() -> None:
         episode_shaped_step_rewards: list[float] = []
         previous_action_idx: int | None = None
 
-        while not done:
+        while not done and episode_steps < max_steps:
             baseline_suggestion = None
             if advisor.available:
                 baseline_suggestion = f"SONG_{advisor.suggest(obs, songs_subset, memory)}"
             prompt = state_to_prompt(obs, max_idx=max_idx, memory=memory, baseline_suggestion=baseline_suggestion)
-            action_token_ids = action_token_ids_full[: max_idx + 1]
-            warmup_random = episode <= 5
-            if warmup_random:
-                action_idx = random.randint(0, max_idx)
-                response_text = f"Reasoning: warmup random policy. Action: SONG_{action_idx}"
-                query_tensor = torch.tensor([], dtype=torch.long, device=device)
-                response_tensor = torch.tensor([], dtype=torch.long, device=device)
-            else:
-                action_idx, query_tensor, response_tensor = _select_action_from_logits(
-                    ppo_trainer=ppo_trainer,
-                    tokenizer=tokenizer,
-                    prompt=prompt,
-                    action_token_ids=action_token_ids,
-                )
-                response_text = f"Reasoning: logit-based selection from fixed action tokens. Action: SONG_{action_idx}"
+            action_idx = random.randint(0, max_idx)
+            response_text = f"Reasoning: debug random policy. Action: SONG_{action_idx}"
+            query_tensor = torch.tensor([], dtype=torch.long, device=device)
+            response_tensor = torch.tensor([], dtype=torch.long, device=device)
             repeated = memory.is_recent_repeat(action_idx)
             action_switched = previous_action_idx is not None and action_idx != previous_action_idx
+            print("Calling env.step...")
             obs = env_episode.step(MusicRlAction(song_index=action_idx))
+            print("Returned from env.step")
             raw_reward = float(obs.reward or 0.0)
             shaped_reward = shape_reward(
                 raw_reward=raw_reward,
@@ -445,18 +456,18 @@ def main() -> None:
             done = bool(obs.done)
             episode_steps += 1
             episode_parsed += 1
+            print(f"[STEP] Episode {episode}, Step {episode_steps}")
+            print(f"[TRL] Episode {episode}, Step {episode_steps}, Action: {action_idx}, Reward: {final_reward:.4f}")
 
-            if not warmup_random:
-                query_buffer.append(query_tensor)
-                response_buffer.append(response_tensor)
-                reward_buffer.append(torch.tensor(final_reward, dtype=torch.float32).to(device))
-                if len(query_buffer) >= ppo_config.batch_size:
-                    query_buffer, response_buffer, reward_buffer = _try_ppo_step(
-                        ppo_trainer=ppo_trainer,
-                        query_buffer=query_buffer,
-                        response_buffer=response_buffer,
-                        reward_buffer=reward_buffer,
-                    )
+            query_buffer.append(query_tensor)
+            response_buffer.append(response_tensor)
+            reward_buffer.append(torch.tensor(final_reward, dtype=torch.float32).to(device))
+            print("Buffer size:", len(reward_buffer))
+            if len(reward_buffer) >= 4:
+                print(">>> PPO STEP TRIGGERED")
+                print(">>> Running PPO update with batch size:", len(reward_buffer))
+                print("Skipping PPO step (debug mode)")
+                query_buffer, response_buffer, reward_buffer = [], [], []
 
             last_action_text = f"SONG_{action_idx}"
             if DEBUG_MODE:
@@ -490,6 +501,8 @@ def main() -> None:
             f"Episode {episode}/{episodes} | raw={raw_total:.3f} | final={shaped_total:.3f} | "
             f"action={last_action_text} | parse_ok={episode_parsed}/{episode_steps}"
         )
+        print(f"Episode {episode} complete")
+        print(f"Episode {episode} finished with reward {raw_total:.3f}")
         print("Insight: Reward spike likely due to successful adaptation.")
         print(f"Parse success rate: {episode_parse_rate * 100:.1f}%")
         if episode_raw_step_rewards:
@@ -502,12 +515,7 @@ def main() -> None:
             )
 
     if query_buffer:
-        query_buffer, response_buffer, reward_buffer = _try_ppo_step(
-            ppo_trainer=ppo_trainer,
-            query_buffer=query_buffer,
-            response_buffer=response_buffer,
-            reward_buffer=reward_buffer,
-        )
+        print("Skipping PPO step (debug mode)")
 
     baseline_rewards = evaluate_random(env_seed=2000, episodes=20, max_idx=max_idx)
     baseline_mean = mean(baseline_rewards)

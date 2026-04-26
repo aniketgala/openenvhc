@@ -1,171 +1,197 @@
-# 🎧 Adaptive Music Recommendation with DRQN vs LLM-RL
+# 🎧 Sequential Music Recommendation using RL
 
 ---
 
-## 👤 Human Story — Why This Project Exists
+## 🚀 Live Demo (Hugging Face Space)
 
-I’ve always loved music.
+👉 [https://huggingface.co/spaces/aniketgala/music_rl_env](https://huggingface.co/spaces/aniketgala/music_rl_env)
 
-Not just listening casually, but noticing how preferences change:
-
-* sometimes you want high-energy tracks
-* sometimes something calm
-* sometimes your mood shifts halfway through a playlist
-
-That made me think:
-
-> Can a system actually *adapt* to changing taste in real time?
-
-Most recommendation systems feel static — they don’t evolve with you in the moment.
-
-So I wanted to explore:
-
-* how learning systems handle changing preferences
-* whether AI can adapt like a human would
-
-This project started from that curiosity.
-
-And honestly, it wasn’t easy.
-
-* Early RL attempts failed completely
-* The LLM agent produced outputs like `!!!!`
-* Training was unstable for a long time
-
-And yes…
-
-> **After ~45 Hugging Face pushes, crashes, and debugging loops — it finally came together.**
+* Run DRQN training live
+* View logs, plots, and results
+* Interact with the environment
 
 ---
 
-## 🤖 AI System — Technical Overview
+## 📘 Project Blog (Full Writeup)
 
-### 🚀 Problem
+👉 [Project Blog](blog.md)
 
-Sequential music recommendation in a **non-stationary environment**, where user preferences change mid-episode.
+This contains:
 
----
-
-### ⚙️ Environment
-
-* State:
-
-  * phase (before/after preference shift)
-  * last outcome
-  * recent song features (energy, valence, danceability)
-
-* Action:
-
-  * select song index
-
-* Reward:
-
-  * genre match
-  * mood alignment
-  * adaptation bonus
-  * repeat penalty
-  * mismatch penalty
+* problem motivation
+* uniqueness
+* build journey
+* insights
 
 ---
 
-### 🧠 Methods
+## 🧪 Training Scripts
 
-#### 1. DRQN (Deep RL Baseline)
+### 🔹 DRQN (Deep RL)
 
-* LSTM-based Q-network
-* Multi-seed training
-* Ensemble evaluation
-
-✔ Stable and high-performing
-
----
-
-#### 2. TRL (LLM-based RL)
-
-* PPO with language model
-* Logit-based action selection (no parsing instability)
-* Reward shaping + log scaling
-
-✔ Adaptive but higher variance
-
----
-
-### 🌟 Why This Is Interesting
-
-Reinforcement learning has been widely applied in:
-
-* games
-* robotics
-* control systems
-
-But **sequential recommendation with dynamic preferences**, especially comparing:
-
-* recurrent RL
-* language-model RL
-
-is still relatively underexplored.
-
-This project focuses on:
-
-* real-time preference shifts
-* adaptation behavior
-* comparing two fundamentally different learning paradigms
-
----
-
-### 📊 Results
-
-| Model           | Score     |
-| --------------- | --------- |
-| Random Baseline | ~1.45     |
-| TRL (LLM-RL)    | **2.06**  |
-| DRQN            | **~7–8+** |
-
----
-
-### 🔍 Key Insights
-
-* DRQN → stable, consistent optimization
-* TRL → adaptive, interpretable, but volatile
-* Reward spikes correspond to **preference adaptation**
-
----
-
-### 📈 Important Observation
-
-Even after stabilizing PPO and compressing rewards:
-
-> Variance remains high due to non-stationary user preferences.
-
-This highlights a real challenge in RL:
-
-👉 Dynamic environments introduce unavoidable instability
-
----
-
-### 🧠 What We Learned
-
-* LLMs need structured action spaces
-* Reward design is critical for PPO
-* Adaptability vs stability is a core trade-off
-* Hybrid approaches are promising
-
----
-
-### 🧪 Demo
-
-Run:
+Run locally or via Space:
 
 ```bash
-python app.py
+python deep_rl_train.py
 ```
-
-Compare:
-
-* DRQN → stable behavior
-* TRL → adaptive but spiky behavior
 
 ---
 
-### 💡 Final Thought
+### 🔹 TRL (LLM-based RL)
 
-> This project started with a simple idea about music — and turned into an exploration of how machines learn changing human preferences.
+👉 Colab Notebook:  
+[https://colab.research.google.com/drive/1IOcUpg8UCMy3_BJQIBbt_kCVkgr9cZqu?usp=sharing](https://colab.research.google.com/drive/1IOcUpg8UCMy3_BJQIBbt_kCVkgr9cZqu?usp=sharing)
+
+* Fully runnable
+* Includes PPO training
+* Generates reward plots
+
+---
+
+## 🧠 Environment Overview
+
+This project implements a **sequential music recommendation environment**.
+
+### State
+
+* phase (preference shift stage)
+* last outcome
+* recent song features:
+  * energy
+  * valence
+  * danceability
+
+---
+
+### Action
+
+* select a song index
+
+---
+
+### Reward
+
+* alignment with hidden user preference
+* penalty for repetition
+* bonus for adapting after preference shift
+
+---
+
+### Data
+
+Uses **Spotify-style audio features**, including:
+
+* Danceability
+* Energy
+* Valence
+
+---
+
+### Standard
+
+Environment is **OpenEnv-compatible**, making it modular and reproducible.
+This environment is built using the **latest OpenEnv framework** and follows its standard API (reset, step, observation), ensuring compatibility and reproducibility.
+---
+
+## 📊 Results
+
+## 📊 Training Evidence
+
+### DRQN (Primary Model)
+
+![Training Curve](results/drqn/final_training_plot.png)
+
+![Loss Curve](results/drqn/drqn_loss_plot.png)
+
+![Ensemble Comparison](results/drqn/drqn_comparison_bar.png)
+
+These plots are generated from real training runs and demonstrate learning progress and performance improvement over baseline.
+
+---
+
+### Key Metrics
+
+* Baseline: 7.71
+* Ensemble: **8.97**
+* Improvement: **+1.26**
+
+---
+
+### Interpretation
+
+* Stable learning across episodes
+* Ensemble significantly improves performance
+* Model captures preference dynamics effectively
+
+---
+
+## 🤖 TRL (LLM-based RL)
+
+* Implemented using PPO
+* Trained in Colab due to runtime constraints
+
+Summary:
+
+* Learns preference alignment
+* More adaptive but less stable
+* Higher computational cost
+
+Latest run metrics (`trl_summary.json`):
+
+* Baseline: -3.825
+* Mean reward: **-4.300**
+* Improvement: **-0.475**
+* Last-20 mean: **-4.300**
+
+---
+
+## ⚖️ DRQN vs TRL
+
+| Aspect      | DRQN    | TRL      |
+| ----------- | ------- | -------- |
+| Performance | High    | Low (latest run) |
+| Stability   | High    | Low      |
+| Adaptation  | Limited | Strong   |
+| Runtime     | Fast    | Slow     |
+
+---
+
+## 📁 Project Structure
+
+```text
+.
+├── deep_rl_train.py
+├── trl_train.py
+├── app.py
+├── blog.md
+├── results/
+│   ├── drqn/
+│   └── trl/
+```
+
+---
+
+## 🎯 Key Highlights
+
+* Sequential RL for dynamic recommendation
+* Uses real music features (energy, valence, danceability)
+* OpenEnv-compatible environment
+* Multi-seed training + ensemble
+* Comparison with LLM-based RL
+
+---
+
+## 🚀 How to Run
+
+### Local
+
+```bash
+python deep_rl_train.py
+```
+
+---
+
+### Demo
+
+Use Hugging Face Space:  
+👉 [https://huggingface.co/spaces/aniketgala/music_rl_env](https://huggingface.co/spaces/aniketgala/music_rl_env)

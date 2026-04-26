@@ -11,6 +11,7 @@ import random
 from pathlib import Path
 from uuid import uuid4
 
+import pandas as pd
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import State
 
@@ -31,6 +32,7 @@ class MusicRlEnvironment(Environment):
     EPISODE_LENGTH: int = 10
     MOOD_SHIFT_STEP: int = 5
     DEFAULT_SEED: int = 42
+    _FEATURE_DEBUG_PRINTED: bool = False
 
     def __init__(self, seed: int = DEFAULT_SEED):
         """Initialize environment state and deterministic catalog RNG."""
@@ -52,11 +54,49 @@ class MusicRlEnvironment(Environment):
         self._recent_song_features: list[float] = [0.0, 0.0, 0.0]
         self._init_hidden_preferences()
 
-    def _load_songs(self) -> list[dict[str, str]]:
-        songs_path = Path(__file__).resolve().parent.parent / "songs.json"
-        songs = json.loads(songs_path.read_text(encoding="utf-8"))
+    def _load_songs(self) -> list[dict[str, str | float]]:
+        dataset_path = Path(__file__).resolve().parent.parent / "dataset.csv"
+        if not dataset_path.exists():
+            raise FileNotFoundError(f"Missing dataset.csv at: {dataset_path}")
+
+        df = pd.read_csv(dataset_path)
+        required = ["energy", "valence", "danceability"]
+        missing = [col for col in required if col not in df.columns]
+        if missing:
+            raise ValueError(f"dataset.csv missing required columns: {missing}")
+
+        songs: list[dict[str, str | float]] = []
+        for idx, row in df.iterrows():
+            energy = float(row["energy"])
+            valence = float(row["valence"])
+            danceability = float(row["danceability"])
+            genre_raw = str(row["track_genre"]).strip() if "track_genre" in df.columns else "unknown"
+            genre = genre_raw if genre_raw else "unknown"
+            mood = "positive" if valence >= 0.6 else ("neutral" if valence >= 0.4 else "negative")
+            song = {
+                "song_id": f"song_{idx}",
+                "genre": genre,
+                "mood": mood,
+                "energy": energy,
+                "valence": valence,
+                "danceability": danceability,
+            }
+            songs.append(song)
+
         if not songs:
-            raise ValueError("songs.json must contain at least one song")
+            raise ValueError("dataset.csv must contain at least one valid row")
+
+        if not MusicRlEnvironment._FEATURE_DEBUG_PRINTED:
+            print("Sample songs after load:")
+            for s in songs[:5]:
+                print(s)
+            energy_vals = [float(s["energy"]) for s in songs]
+            valence_vals = [float(s["valence"]) for s in songs]
+            dance_vals = [float(s["danceability"]) for s in songs]
+            print("Energy range:", min(energy_vals), max(energy_vals))
+            print("Valence range:", min(valence_vals), max(valence_vals))
+            print("Dance range:", min(dance_vals), max(dance_vals))
+            MusicRlEnvironment._FEATURE_DEBUG_PRINTED = True
         return songs
 
     def _init_hidden_preferences(self) -> None:
@@ -93,18 +133,12 @@ class MusicRlEnvironment(Environment):
             return action.song_id, song
         return None, None
 
-    def _extract_recent_features(self, song: dict[str, str]) -> list[float]:
-        # Keep this robust: if numeric features are absent, use neutral defaults.
-        def _to_float(key: str) -> float:
-            value = song.get(key)
-            if value is None:
-                return 0.5
-            try:
-                return float(value)
-            except (TypeError, ValueError):
-                return 0.5
-
-        return [_to_float("energy"), _to_float("valence"), _to_float("danceability")]
+    def _extract_recent_features(self, song: dict[str, str | float]) -> list[float]:
+        return [
+            float(song["energy"]),
+            float(song["valence"]),
+            float(song["danceability"]),
+        ]
 
     def _compute_reward(self, song: dict[str, str], is_repeat: bool) -> dict[str, float]:
         genre_match = int(song["genre"] == self._preferred_genre)

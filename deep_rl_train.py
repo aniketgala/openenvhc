@@ -28,6 +28,8 @@ MODEL_PATH = ROOT / "model.pt"
 BEST_MODEL_PATH = ROOT / "best_model.pt"
 FINAL_TRAIN_PLOT_PATH = ROOT / "final_training_plot.png"
 REWARD_DIST_PLOT_PATH = ROOT / "reward_distribution.png"
+LOSS_PLOT_PATH = ROOT / "drqn_loss_plot.png"
+COMPARISON_BAR_PATH = ROOT / "drqn_comparison_bar.png"
 SUMMARY_PATH = ROOT / "summary.json"
 
 FEATURE_COLUMNS = ["energy", "valence", "tempo", "danceability", "acousticness"]
@@ -57,6 +59,38 @@ def minmax_normalize(df: pd.DataFrame, columns: list[str]) -> pd.DataFrame:
     return out
 
 
+def safe_minmax(value: float, min_val: float, max_val: float) -> float:
+    if max_val - min_val < 1e-6:
+        return 0.5
+    return (value - min_val) / (max_val - min_val)
+
+
+def normalize_song_features_with_global_stats(
+    sampled: pd.DataFrame,
+    full_reference: pd.DataFrame,
+) -> pd.DataFrame:
+    out = sampled.copy()
+    energy_vals = full_reference["energy"].astype(float).tolist()
+    valence_vals = full_reference["valence"].astype(float).tolist()
+    dance_vals = full_reference["danceability"].astype(float).tolist()
+
+    energy_min, energy_max = min(energy_vals), max(energy_vals)
+    valence_min, valence_max = min(valence_vals), max(valence_vals)
+    dance_min, dance_max = min(dance_vals), max(dance_vals)
+
+    out["energy"] = out["energy"].astype(float).map(lambda x: safe_minmax(float(x), energy_min, energy_max))
+    out["valence"] = out["valence"].astype(float).map(lambda x: safe_minmax(float(x), valence_min, valence_max))
+    out["danceability"] = out["danceability"].astype(float).map(lambda x: safe_minmax(float(x), dance_min, dance_max))
+
+    # Keep existing behavior for other features.
+    out = minmax_normalize(out, ["tempo", "acousticness"])
+
+    print("Energy range:", float(out["energy"].min()), float(out["energy"].max()))
+    print("Valence range:", float(out["valence"].min()), float(out["valence"].max()))
+    print("Dance range:", float(out["danceability"].min()), float(out["danceability"].max()))
+    return out
+
+
 def load_song_subset(
     dataset_path: Path,
     sample_size: int = 60,
@@ -78,7 +112,7 @@ def load_song_subset(
     capped = min(100, max(50, sample_size))
     n = min(capped, len(work))
     sampled = work.sample(n=n, random_state=seed).reset_index(drop=True)
-    sampled = minmax_normalize(sampled, FEATURE_COLUMNS)
+    sampled = normalize_song_features_with_global_stats(sampled=sampled, full_reference=work)
     features = sampled[FEATURE_COLUMNS].to_numpy(dtype=np.float32)
     return sampled, features
 
@@ -269,7 +303,7 @@ def train_dqn(
     lr: float = 5e-4,
     seed: int = 42,
     best_model_path: Path | None = None,
-) -> tuple[DRQNLite, list[float], torch.device, float]:
+) -> tuple[DRQNLite, list[float], torch.device, float, list[float]]:
     set_seed(seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = SpotifyRecEnv(features, seed=seed, episode_length=20)
@@ -288,6 +322,7 @@ def train_dqn(
     epsilon_decay = 0.997
     episode_rewards: list[float] = []
     recent_losses: deque[float] = deque(maxlen=200)
+    loss_history: list[float] = []
     recent_q_values: deque[float] = deque(maxlen=200)
     global_step = 0
     best_avg_reward = float("-inf")
@@ -372,6 +407,7 @@ def train_dqn(
 
                 loss = criterion(q_values, target_q)
                 recent_losses.append(float(loss.item()))
+                loss_history.append(float(loss.item()))
                 recent_q_values.append(float(q_values.mean().item()))
                 optimizer.zero_grad()
                 loss.backward()
@@ -410,7 +446,7 @@ def train_dqn(
                 f"q(avg)={(mean(recent_q_values) if recent_q_values else 0.0):.4f}"
             )
 
-    return model, episode_rewards, device, best_avg_reward
+    return model, episode_rewards, device, best_avg_reward, loss_history
 
 
 def evaluate_policy(model: DRQNLite, features: np.ndarray, episodes: int = 100, seed: int = 1000) -> list[float]:
@@ -569,6 +605,35 @@ def save_plots(
     plt.close()
 
 
+def save_loss_plot(loss_history: list[float]) -> None:
+    if not loss_history:
+        return
+    plt.figure(figsize=(9, 4.5))
+    plt.plot(loss_history, linewidth=1.2)
+    plt.title("DRQN Training Loss")
+    plt.xlabel("Training Steps")
+    plt.ylabel("Loss")
+    plt.tight_layout()
+    plt.savefig(LOSS_PLOT_PATH, dpi=140)
+    plt.close()
+
+
+def save_comparison_bar(baseline_mean: float, trained_mean: float) -> None:
+    labels = ["Random Baseline", "Ensemble DRQN"]
+    values = [baseline_mean, trained_mean]
+    plt.figure(figsize=(6.5, 4.5))
+    bars = plt.bar(labels, values, color=["#d62728", "#1f77b4"])
+    plt.title("Baseline vs Ensemble DRQN Performance")
+    plt.ylabel("Average Reward")
+    for bar, value in zip(bars, values):
+        x = bar.get_x() + bar.get_width() / 2
+        plt.text(x, value, f"{value:.2f}", ha="center", va="bottom")
+    plt.text(1, trained_mean, f"+{trained_mean - baseline_mean:.2f}", ha="center")
+    plt.tight_layout()
+    plt.savefig(COMPARISON_BAR_PATH, dpi=140)
+    plt.close()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train compact DQN on Spotify subset.")
     parser.add_argument(
@@ -595,6 +660,7 @@ def main() -> None:
     train_seeds = [0, 42, 99]
     per_seed_results: list[dict] = []
     all_training_curves: list[list[float]] = []
+    all_loss_histories: list[list[float]] = []
     all_trained_rewards: list[float] = []
     device_str = "cpu"
 
@@ -606,7 +672,7 @@ def main() -> None:
     for train_seed in train_seeds:
         print(f"\n--- Training seed {train_seed} ---")
         seed_ckpt = ROOT / f"best_model_seed_{train_seed}.pt"
-        model, training_rewards, device, best_avg = train_dqn(
+        model, training_rewards, device, best_avg, loss_history = train_dqn(
             features,
             episodes=episodes,
             batch_size=batch_size,
@@ -617,6 +683,7 @@ def main() -> None:
         )
         device_str = str(device)
         all_training_curves.append(training_rewards)
+        all_loss_histories.append(loss_history)
 
         checkpoint = torch.load(seed_ckpt, map_location=device)
         eval_model = DRQNLite(feature_dim=STEP_FEATURE_DIM, action_feature_dim=3).to(device)
@@ -666,6 +733,9 @@ def main() -> None:
         trained_rewards=all_trained_rewards,
         baseline_mean=baseline_mean,
     )
+    merged_loss_history = [loss for per_seed in all_loss_histories for loss in per_seed]
+    save_loss_plot(merged_loss_history)
+    save_comparison_bar(baseline_mean=baseline_mean, trained_mean=ensemble_mean)
 
     summary = {
         "dataset_seed": args.seed,
@@ -699,9 +769,14 @@ def main() -> None:
     print(f"Mean: {mean_trained_reward:.3f}")
     print(f"Ensemble mean ± std: {ensemble_mean:.3f} ± {ensemble_std:.3f}")
     print(f"Ensemble improvement: {ensemble_improvement:.3f}")
+    print(f"Baseline: {baseline_mean:.3f}")
+    print(f"Trained: {mean_trained_reward:.3f}")
+    print(f"Improvement: {mean_trained_reward - baseline_mean:.3f}")
     print(f"Saved model: {MODEL_PATH}")
     print(f"Saved training plot: {FINAL_TRAIN_PLOT_PATH}")
     print(f"Saved reward distribution: {REWARD_DIST_PLOT_PATH}")
+    print(f"Saved loss plot: {LOSS_PLOT_PATH}")
+    print(f"Saved comparison bar: {COMPARISON_BAR_PATH}")
     print(f"Saved summary: {SUMMARY_PATH}")
 
 
