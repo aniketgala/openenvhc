@@ -1,0 +1,8 @@
+[
+  {"song_id": "s1", "title": "Neon Nights", "genre": "pop", "mood": "happy"},
+  {"song_id": "s2", "title": "Rainy Drive", "genre": "pop", "mood": "calm"},
+  {"song_id": "s3", "title": "Thunder Pulse", "genre": "rock", "mood": "energetic"},
+  {"song_id": "s4", "title": "Quiet Horizon", "genre": "rock", "mood": "calm"},
+  {"song_id": "s5", "title": "Velvet Sky", "genre": "jazz", "mood": "calm"},
+  {"song_id": "s6", "title": "Sunset Groove", "genre": "jazz", "mood": "happy"}
+]

@@ -1,0 +1,50 @@
+{
+  "dataset_seed": 42,
+  "train_seeds": [
+    0,
+    42,
+    99
+  ],
+  "episodes": 1400,
+  "batch_size": 32,
+  "subset_size": 50,
+  "device": "cpu",
+  "baseline_mean": 7.166038060691207,
+  "baseline_std": 1.913759091538224,
+  "per_seed_results": [
+    {
+      "seed": 0,
+      "best_avg_reward_last50": 8.473164086669684,
+      "trained_mean": 8.252733966195956,
+      "trained_std": 2.786029219862644,
+      "improvement": 1.0866959055047491,
+      "checkpoint_file": "best_model_seed_0.pt"
+    },
+    {
+      "seed": 42,
+      "best_avg_reward_last50": 8.492698386244475,
+      "trained_mean": 8.24111374364545,
+      "trained_std": 2.8609425095530883,
+      "improvement": 1.0750756829542425,
+      "checkpoint_file": "best_model_seed_42.pt"
+    },
+    {
+      "seed": 99,
+      "best_avg_reward_last50": 8.373702157303692,
+      "trained_mean": 8.086126208081842,
+      "trained_std": 2.701575344629841,
+      "improvement": 0.9200881473906346,
+      "checkpoint_file": "best_model_seed_99.pt"
+    }
+  ],
+  "best_trained_mean": 8.252733966195956,
+  "mean_trained_mean": 8.193324639307749,
+  "ensemble_mean": 8.473054694868624,
+  "ensemble_std": 2.6619785805500014,
+  "ensemble_improvement": 1.3070166341774172,
+  "best_model_seed": 0,
+  "model_path": "model.pt",
+  "best_model_path": "best_model.pt",
+  "training_plot": "final_training_plot.png",
+  "reward_distribution_plot": "reward_distribution.png"
+}

@@ -1,0 +1,7 @@
+{
+  "episodes": 30,
+  "device": "cpu",
+  "mean_reward": -2.45,
+  "last20_mean_reward": -1.675,
+  "plot": "trl_training_plot.png"
+}
