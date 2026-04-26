@@ -1,77 +1,118 @@
 # 🎧 Adaptive Music Recommendation with DRQN vs LLM-RL
 
-## 🚀 Overview
+---
 
-We built a sequential music recommendation system under **changing user preferences**, modeled as a non-stationary RL environment.
+## 👤 Human Story — Why This Project Exists
 
-We compare two fundamentally different approaches:
+I’ve always loved music.
 
-* **DRQN (Deep RL)** → recurrent Q-learning with memory
-* **TRL (LLM-based RL)** → language-model policy optimized via PPO
+Not just listening casually, but noticing how preferences change:
 
-## 🌟 Why This Project is Unique
+* sometimes you want high-energy tracks
+* sometimes something calm
+* sometimes your mood shifts halfway through a playlist
 
-Reinforcement learning has been widely explored in:
+That made me think:
 
-* games
-* robotics
-* control systems
+> Can a system actually *adapt* to changing taste in real time?
 
-However, **sequential recommendation under shifting user preferences** — especially combining **deep RL and LLM-based RL** — is still relatively underexplored.
+Most recommendation systems feel static — they don’t evolve with you in the moment.
 
-Most recommendation systems:
+So I wanted to explore:
 
-* assume static preferences
-* rely on supervised learning or bandits
+* how learning systems handle changing preferences
+* whether AI can adapt like a human would
 
-In contrast, this project:
+This project started from that curiosity.
 
-* models **dynamic user behavior**
-* introduces **mid-episode preference shifts**
-* compares **two fundamentally different learning paradigms**
+And honestly, it wasn’t easy.
 
-👉 This makes it closer to real-world user interaction than traditional setups.
+* Early RL attempts failed completely
+* The LLM agent produced outputs like `!!!!`
+* Training was unstable for a long time
 
-## 🧠 Key Idea
+And yes…
 
-User preferences shift mid-episode.
+> **After ~45 Hugging Face pushes, crashes, and debugging loops — it finally came together.**
 
-The agent must:
+---
 
-* detect preference change
-* adapt recommendations dynamically
+## 🤖 AI System — Technical Overview
 
-## ⚙️ Environment
+### 🚀 Problem
+
+Sequential music recommendation in a **non-stationary environment**, where user preferences change mid-episode.
+
+---
+
+### ⚙️ Environment
 
 * State:
-  * phase (before/after shift)
+
+  * phase (before/after preference shift)
   * last outcome
   * recent song features (energy, valence, danceability)
+
 * Action:
-  * select a song (index)
+
+  * select song index
+
 * Reward:
+
   * genre match
   * mood alignment
   * adaptation bonus
   * repeat penalty
   * mismatch penalty
 
-## 🏗️ Methods
+---
 
-### 1. DRQN (Baseline)
+### 🧠 Methods
+
+#### 1. DRQN (Deep RL Baseline)
 
 * LSTM-based Q-network
-* multi-seed training + ensemble
-* strong, stable performance
+* Multi-seed training
+* Ensemble evaluation
 
-### 2. TRL (LLM-RL)
+✔ Stable and high-performing
 
-* TinyLlama / distilgpt2
-* PPO optimization
-* logit-based action selection (no parsing)
-* reward shaping + compression
+---
 
-## 📊 Results
+#### 2. TRL (LLM-based RL)
+
+* PPO with language model
+* Logit-based action selection (no parsing instability)
+* Reward shaping + log scaling
+
+✔ Adaptive but higher variance
+
+---
+
+### 🌟 Why This Is Interesting
+
+Reinforcement learning has been widely applied in:
+
+* games
+* robotics
+* control systems
+
+But **sequential recommendation with dynamic preferences**, especially comparing:
+
+* recurrent RL
+* language-model RL
+
+is still relatively underexplored.
+
+This project focuses on:
+
+* real-time preference shifts
+* adaptation behavior
+* comparing two fundamentally different learning paradigms
+
+---
+
+### 📊 Results
 
 | Model           | Score     |
 | --------------- | --------- |
@@ -79,22 +120,38 @@ The agent must:
 | TRL (LLM-RL)    | **2.06**  |
 | DRQN            | **~7–8+** |
 
-## 🔍 Key Insights
+---
 
-* DRQN is **stable and high-performing**
-* TRL is **adaptive but high-variance**
-* Even with reward stabilization, TRL shows spikes due to **non-stationary preferences**
+### 🔍 Key Insights
 
-## 📈 Interpretation
+* DRQN → stable, consistent optimization
+* TRL → adaptive, interpretable, but volatile
+* Reward spikes correspond to **preference adaptation**
 
-Reward spikes correspond to:  
-👉 successful adaptation after preference shifts
+---
 
-This highlights a key challenge:
+### 📈 Important Observation
 
-> RL in dynamic environments is inherently volatile, especially for language-based policies.
+Even after stabilizing PPO and compressing rewards:
 
-## 🧪 Demo
+> Variance remains high due to non-stationary user preferences.
+
+This highlights a real challenge in RL:
+
+👉 Dynamic environments introduce unavoidable instability
+
+---
+
+### 🧠 What We Learned
+
+* LLMs need structured action spaces
+* Reward design is critical for PPO
+* Adaptability vs stability is a core trade-off
+* Hybrid approaches are promising
+
+---
+
+### 🧪 Demo
 
 Run:
 
@@ -102,45 +159,13 @@ Run:
 python app.py
 ```
 
-Choose:
+Compare:
 
 * DRQN → stable behavior
 * TRL → adaptive but spiky behavior
 
-## 💡 Takeaway
+---
 
-* Deep RL → optimization
-* LLM-RL → reasoning + adaptability
+### 💡 Final Thought
 
-👉 Hybrid systems are promising.
-
-## 🛠️ Build Journey
-
-This wasn’t a smooth ride.
-
-* Multiple RL approaches failed before stabilizing DRQN
-* TRL pipeline initially produced invalid outputs (`!!!!`, broken parsing)
-* Reward instability required multiple redesigns (scaling, normalization, log compression)
-
-And yes…
-
-> **After ~45 Hugging Face Space pushes, countless crashes, and debugging sessions — it finally worked.**
-
-## 🧠 What We Learned
-
-* LLMs are not naturally good at raw action selection → require structure
-* PPO with language models is highly sensitive to reward design
-* Non-stationary environments introduce unavoidable variance
-* Stability (DRQN) vs adaptability (TRL) is a real trade-off
-
-## ☁️ Running on Google Colab
-
-To avoid dependency conflicts in Colab:
-
-In Colab, some preinstalled packages (like diffusers) may cause dependency conflicts. The provided setup cell removes these and installs a compatible environment.
-
-1. Run setup cell to install compatible versions  
-2. Restart runtime  
-3. Run training script
-
-> This project started as an experiment — and ended as a comparison of two different ways machines can learn to understand human preferences.
+> This project started with a simple idea about music — and turned into an exploration of how machines learn changing human preferences.
